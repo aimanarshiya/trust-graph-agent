@@ -36,8 +36,8 @@ customers can all be dishonest, sometimes together (collusion). The system must:
 | Combined risk scoring | ✅ Done | `backend/risk_scorer.py` — blends graph + ML + rule signals into one explainable score per seller |
 | REST API | ✅ Done | `backend/api.py` — FastAPI, serves live risk data as JSON |
 | Localhost dashboard | ✅ Done | `frontend/index.html` — working, tested end to end |
-| Explainer agent (LLM) | ⬜ Not started | Turns evidence into a plain-language explanation |
-| Remediation agent (LLM) | ⬜ Not started | Decides soft vs. hard action, enforces the 95%-precision guardrail |
+| Explainer agent (LLM) | ✅ Done | `backend/agents/explainer_agent.py` — verified: all 7 pending cases have real, evidence-grounded explanations stored |
+| Remediation agent (LLM) | 🔶 In progress | `backend/agents/remediation_agent.py` — JSON-based parsing implemented (robust against truncation); blocked on final verification run by rate limit, code is complete |
 | Self-check agent (LLM) | ⬜ Not started | Validates the analysis before final output |
 | Database / persistence | ⬜ Not started | Currently recomputes live from CSV on every API call |
 | Appeal workflow | ⬜ Not started | Required deliverable |
