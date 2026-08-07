@@ -7,10 +7,10 @@ emails at registration as an identity-risk signal.
 
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), "external"))
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "external"))
 import pandas as pd
-from debounce_client import check_email
+from external.debounce_client import check_email
 
 
 def check_seller_signups(sellers: pd.DataFrame, email_col: str = "signup_email") -> pd.DataFrame:
