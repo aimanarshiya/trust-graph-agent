@@ -1313,3 +1313,32 @@ DO NOT ONLY ASK WHETHER A TRANSACTION IS FRAUDULENT.
 ASK WHY IT IS RISKY, WHAT IT IS CONNECTED TO, WHAT EVIDENCE SUPPORTS THE RISK, AND WHAT SHOULD BE DONE NEXT.
 
 This relationship-aware and explainable approach is the foundation of the Trust-Graph system.
+
+Our fraud detection blends three independent signals — a classical graph algorithm that finds collusion rings, rule-based checks for known fraud patterns, and a trained ML model — into one explainable risk score per seller. Only borderline/high cases get expensive LLM reasoning; the scoring itself is fast and cheap.
+
+transactions.csv + deliveries.csv
+            │
+            ├──────────────────────┬──────────────────────┐
+            ▼                      ▼                       ▼
+    graph_engine.py         risk_scorer.py            ml_scorer.py
+  graph_anomaly_scores()   compute_rule_signals()   compute_ml_signals()
+            │                      │                       │
+   graph_risk_score          return_rate,            ml_fraud_score
+   (0-1 per seller)       missing_proof_rate               │
+            │                      │                       │
+            └──────────────┬───────┴───────────────────────┘
+                            ▼
+                  risk_scorer.py: compute_final_risk()
+                            │
+              final_risk_score = 0.45×graph + 0.25×ML
+                            + 0.15×return_rate + 0.15×missing_proof
+                            │
+                            ▼
+                   classify_tier() → no_action / soft_intervention
+                                      / hard_action_candidate
+                            │
+                            ▼
+              needs_agent_review = score >= 0.4
+              (ONLY these go on to cost an LLM call)
+
+              
