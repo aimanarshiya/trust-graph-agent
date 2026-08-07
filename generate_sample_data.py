@@ -3,7 +3,8 @@ generate_sample_data.py
 --------------------------
 Generates synthetic e-commerce transaction/seller/delivery data with
 a known, planted subset of collusion rings. Includes device_id and
-ip_address columns required by graph_engine.py's collusion detection.
+ip_address columns required by graph_engine.py's collusion detection,
+plus signup_email for the DeBounce disposable-email check.
 """
 
 import pandas as pd
@@ -49,6 +50,7 @@ for i in range(NUM_NORMAL_SELLERS):
         "seller_id": seller_id,
         "tenure_days": tenure_days,
         "size": random.choice(["small", "medium", "large"]),
+        "signup_email": f"seller{i}@gmail.com",
     })
 
     num_txns = random.randint(6, 15)
@@ -61,7 +63,6 @@ for i in range(NUM_NORMAL_SELLERS):
         is_return = random.random() < 0.08
         status = "delivered"
 
-        # each normal customer mostly uses their own distinct device/IP
         device_id = f"DEV{c_idx:03d}"
         ip_address = fake_ip(c_idx)
 
@@ -73,7 +74,7 @@ for i in range(NUM_NORMAL_SELLERS):
             "device_id": device_id,
             "ip_address": ip_address,
             "amount": random.randint(300, 3000),
-        
+            "status": status,
             "is_return": is_return,
         })
 
@@ -90,13 +91,11 @@ for r in range(NUM_RING_SELLERS):
         "seller_id": seller_id,
         "tenure_days": random.randint(10, 60),
         "size": "small",
+        "signup_email": f"ring{r}@mailinator.com",
     })
 
     ring_customers = [f"C_RING{r}_{k}" for k in range(5)]
     ring_delivery = f"D_RING{r}"
-    # THE COLLUSION SIGNAL: all fake customers in this ring share the
-    # SAME device AND the SAME IP -- this is what graph_engine.py's
-    # shared_device / shared_ip edges should catch
     ring_device = f"DEV_RING{r}"
     ring_ip = f"10.10.10.{r}"
 
@@ -119,7 +118,6 @@ for r in range(NUM_RING_SELLERS):
 
         deliveries.append({
             "transaction_id": txn_id,
-            "status": status,
             "proof_photo_provided": random.random() > 0.5,
             "gps_mismatch": random.random() < 0.3,
         })

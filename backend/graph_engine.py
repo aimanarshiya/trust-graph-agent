@@ -11,15 +11,24 @@ WHAT IT DOES:
    self-ordering fraud pattern)
 3. Runs community detection to find tightly-connected clusters that
    look like coordinated rings, not organic shopping behavior
-4. Outputs a per-seller and per-customer graph anomaly score
+4. Checks live IP reputation via AbuseIPDB as an additional real-world
+   signal (device/IP intelligence, matching the problem statement's
+   "Identity & Device Intelligence Service" integration point)
+5. Outputs a per-seller and per-customer graph anomaly score
 
 This score feeds into risk_scorer.py, which combines it with rule-based
 signals before deciding whether a case is worth an expensive LLM call.
 """
 
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "external"))
+
 import pandas as pd
 import networkx as nx
 from networkx.algorithms.community import greedy_modularity_communities
+from abuseipdb_client import check_ip
 
 
 def build_actor_graph(transactions: pd.DataFrame) -> nx.Graph:
@@ -74,12 +83,16 @@ def detect_collusion_rings(G: nx.Graph) -> list[set]:
     return suspicious
 
 
-def graph_anomaly_scores(transactions: pd.DataFrame) -> pd.DataFrame:
+def graph_anomaly_scores(transactions: pd.DataFrame, check_ip_reputation: bool = True) -> pd.DataFrame:
     """
     Main entry point. Returns a DataFrame with one row per seller,
     including a graph_risk_score (0-1) based on:
     - how many customers linked to this seller share a device/IP
     - whether the seller sits inside a detected suspicious community
+    - live IP-reputation (AbuseIPDB) on the seller's associated IP
+
+    check_ip_reputation=False skips the live API calls (useful for
+    fast local testing without burning free-tier quota).
     """
     G = build_actor_graph(transactions)
     rings = detect_collusion_rings(G)
@@ -100,9 +113,23 @@ def graph_anomaly_scores(transactions: pd.DataFrame) -> pd.DataFrame:
         # Is this seller itself inside a suspicious tight community?
         in_ring = seller_id in ring_members
 
+        # Live IP-reputation check on this seller's most recent IP
+        # (only check one IP per seller to conserve free-tier quota --
+        # AbuseIPDB free tier is 1000 checks/day)
+        abuse_score = 0.0
+        if check_ip_reputation:
+            seller_ips = seller_txns["ip_address"].dropna().unique()
+            if len(seller_ips) > 0:
+                ip_result = check_ip(seller_ips[0])
+                abuse_score = ip_result.get("abuse_confidence_score", 0) / 100  # normalize to 0-1
+
         # Simple, explainable scoring formula (not a black box -- important
+        
         # for the "explain the evidence in plain language" requirement)
-        graph_risk_score = min(1.0, 0.6 * shared_ratio + 0.4 * (1 if in_ring else 0))
+        graph_risk_score = min(
+            1.0,
+            0.5 * shared_ratio + 0.3 * (1 if in_ring else 0) + 0.2 * abuse_score
+        )
 
         results.append({
             "seller_id": seller_id,
@@ -110,6 +137,7 @@ def graph_anomaly_scores(transactions: pd.DataFrame) -> pd.DataFrame:
             "shared_attr_customers": shared_attr_customers,
             "shared_attr_ratio": round(shared_ratio, 3),
             "in_suspicious_community": in_ring,
+            "ip_abuse_score": round(abuse_score, 3),
             "graph_risk_score": round(graph_risk_score, 3),
         })
 
