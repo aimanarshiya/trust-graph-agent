@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Trust Graph — Fraud Detection Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38;
+    --text: #e7e9ee; --muted: #9aa0ac;
+    --low: #3ecf8e; --soft: #f5b942; --hard: #f45b69;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); padding: 32px; }
+  header { margin-bottom: 24px; }
+  h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .subtitle { color: var(--muted); font-size: 14px; }
+  .metrics-row { display: flex; gap: 16px; margin: 20px 0 28px 0; flex-wrap: wrap; }
+  .metric-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; min-width: 140px; }
+  .metric-card .label { font-size: 12px; color: var(--muted); }
+  .metric-card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  .tier-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .tier-no_action { background: rgba(62,207,142,0.15); color: var(--low); }
+  .tier-soft_intervention { background: rgba(245,185,66,0.15); color: var(--soft); }
+  .tier-hard_action_candidate { background: rgba(244,91,105,0.15); color: var(--hard); }
+  .status { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .review-yes { color: var(--hard); font-weight: 600; }
+  .review-no { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Trust Graph — Fraud Detection Dashboard</h1>
+  <div class="subtitle">Graph collusion detection + ML model + rule-based signals, blended per seller</div>
+</header>
+
+<div class="metrics-row">
+  <div class="metric-card"><div class="label">ML Precision</div><div class="value" id="mPrecision">—</div></div>
+  <div class="metric-card"><div class="label">ML Recall</div><div class="value" id="mRecall">—</div></div>
+  <div class="metric-card"><div class="label">ML AUC</div><div class="value" id="mAuc">—</div></div>
+  <div class="metric-card"><div class="label">Sellers flagged</div><div class="value" id="mFlagged">—</div></div>
+</div>
+
+<div class="status" id="status">Loading cases…</div>
+
+<table id="casesTable" style="display:none;">
+  <thead>
+    <tr>
+      <th>Seller</th><th>Graph Risk</th><th>ML Score</th><th>Return Rate</th>
+      <th>Missing Proof</th><th>Final Score</th><th>Tier</th><th>Needs Review</th>
+    </tr>
+  </thead>
+  <tbody id="casesBody"></tbody>
+</table>
+
+<script>
+  function tierLabel(tier) { return tier.replace(/_/g, " "); }
+
+  async function loadDashboard() {
+    const statusEl = document.getElementById("status");
+    try {
+      const [metricsRes, casesRes] = await Promise.all([
+        fetch("/api/model-metrics"),
+        fetch("/api/cases"),
+      ]);
+      if (!metricsRes.ok || !casesRes.ok) throw new Error("API returned an error status");
+
+      const metrics = await metricsRes.json();
+      const cases = await casesRes.json();
+
+      document.getElementById("mPrecision").textContent = metrics.precision.toFixed(3);
+      document.getElementById("mRecall").textContent = metrics.recall.toFixed(3);
+      document.getElementById("mAuc").textContent = metrics.auc.toFixed(3);
+      document.getElementById("mFlagged").textContent = cases.filter(c => c.needs_agent_review).length;
+
+      const tbody = document.getElementById("casesBody");
+      tbody.innerHTML = "";
+      cases.forEach(c => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${c.seller_id}</td>
+          <td>${c.graph_risk_score.toFixed(3)}</td>
+          <td>${c.ml_fraud_score.toFixed(3)}</td>
+          <td>${c.return_rate.toFixed(3)}</td>
+          <td>${c.missing_proof_rate.toFixed(3)}</td>
+          <td><strong>${c.final_risk_score.toFixed(3)}</strong></td>
+          <td><span class="tier-pill tier-${c.tier}">${tierLabel(c.tier)}</span></td>
+          <td class="${c.needs_agent_review ? 'review-yes' : 'review-no'}">${c.needs_agent_review ? "Yes" : "No"}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      statusEl.style.display = "none";
+      document.getElementById("casesTable").style.display = "table";
+    } catch (err) {
+      statusEl.textContent = "Could not load data from the API: " + err.message +
+        " — make sure uvicorn is running (uvicorn api:app --reload).";
+    }
+  }
+  loadDashboard();
+</script>
+</body>
+</html>
