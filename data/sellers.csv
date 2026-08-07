@@ -1,0 +1,8 @@
+seller_id,seller_name,rating,tenure_months,size,total_payout
+S001,QuickMart Traders,4.8,2,small,8750
+S002,GreenLeaf Grocers,4.5,18,medium,4500
+S003,Urban Styles,3.2,6,small,6200
+S004,Home Essentials Co,4.6,24,large,12000
+S005,FreshBasket,4.4,10,medium,3800
+S006,PocketTech,4.7,3,small,1750
+S007,Elite Electronics,3.0,14,large,15400

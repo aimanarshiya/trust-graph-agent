@@ -1,0 +1,21 @@
+delivery_partner_id,delivery_partner_name,transaction_id,gps_match,proof_photo_captured,delivery_time_minutes
+D01,Ravi Kumar,T1001,yes,yes,25
+D01,Ravi Kumar,T1002,yes,yes,22
+D01,Ravi Kumar,T1003,no,no,10
+D01,Ravi Kumar,T1004,no,no,12
+D02,Anita Sharma,T1011,yes,yes,30
+D03,Suresh Patel,T1005,yes,yes,28
+D03,Suresh Patel,T1006,yes,yes,26
+D04,Vikram Singh,T1007,yes,yes,35
+D04,Vikram Singh,T1008,yes,yes,33
+D05,Meena Iyer,T1009,yes,yes,20
+D05,Meena Iyer,T1010,yes,yes,19
+D06,Arjun Rao,T1013,yes,yes,24
+D06,Arjun Rao,T1014,yes,yes,23
+D07,Priya Nair,T1016,yes,yes,15
+D07,Priya Nair,T1017,yes,yes,16
+D01,Ravi Kumar,T1012,no,no,9
+D01,Ravi Kumar,T1015,no,no,8
+D01,Ravi Kumar,T1018,no,no,11
+D08,Karan Mehta,T1019,yes,yes,40
+D08,Karan Mehta,T1020,yes,no,38
