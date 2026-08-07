@@ -1,8 +1,44 @@
-seller_id,seller_name,rating,tenure_months,size,total_payout
-S001,QuickMart Traders,4.8,2,small,8750
-S002,GreenLeaf Grocers,4.5,18,medium,4500
-S003,Urban Styles,3.2,6,small,6200
-S004,Home Essentials Co,4.6,24,large,12000
-S005,FreshBasket,4.4,10,medium,3800
-S006,PocketTech,4.7,3,small,1750
-S007,Elite Electronics,3.0,14,large,15400
+seller_id,tenure_days,size
+S000,86,large
+S001,39,large
+S002,72,large
+S003,221,large
+S004,88,small
+S005,334,medium
+S006,739,medium
+S007,891,large
+S008,84,large
+S009,71,large
+S010,395,medium
+S011,20,medium
+S012,701,small
+S013,31,medium
+S014,68,large
+S015,56,large
+S016,192,small
+S017,710,medium
+S018,52,medium
+S019,61,medium
+S020,692,small
+S021,75,medium
+S022,828,large
+S023,88,large
+S024,81,medium
+S025,551,small
+S026,196,small
+S027,54,medium
+S028,773,large
+S029,43,medium
+S030,223,large
+S031,847,large
+S032,414,medium
+S033,844,medium
+S034,523,large
+S035,122,large
+S036,731,large
+S037,106,large
+S038,47,large
+S039,190,small
+S_RING00,15,small
+S_RING01,18,small
+S_RING02,47,small

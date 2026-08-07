@@ -23,17 +23,13 @@ MODEL_NAME = "models/gemini-3.5-flash"  # fast + cheap, good fit for this build
 
 
 def call_llm(prompt: str, system_instruction: str = None) -> str:
-    """
-    Single entry point for every agent. Takes a prompt (and optional
-    system instruction), returns plain text.
-    """
     model = genai.GenerativeModel(
         model_name=MODEL_NAME,
         system_instruction=system_instruction,
+        generation_config={"max_output_tokens": 500},   # <-- must be here
     )
     response = model.generate_content(prompt)
     return response.text.strip()
-
 
 if __name__ == "__main__":
     # Quick smoke test

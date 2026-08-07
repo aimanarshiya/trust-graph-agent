@@ -13,6 +13,7 @@ Two tables:
 
 import sqlite3
 import os
+import json
 from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trust_graph.db")
@@ -36,6 +37,7 @@ def init_db():
             final_risk_score    REAL NOT NULL,
             tier                TEXT NOT NULL,
             needs_agent_review  INTEGER NOT NULL,
+            evidence_json       TEXT,
             explanation         TEXT,
             action_taken        TEXT DEFAULT 'none',
             status              TEXT DEFAULT 'open',
@@ -64,22 +66,25 @@ def _now() -> str:
 
 
 def log_case(seller_id: str, final_risk_score: float, tier: str,
-             needs_agent_review: bool) -> int:
+             needs_agent_review: bool, evidence: dict = None) -> int:
     """
     Insert a new fraud case (called after risk_scorer.py runs).
-    Returns the new case_id.
-    Also writes the first audit_logs entry: 'score_computed'.
+    evidence: the full row of signals from risk_scorer.py (graph_risk_score,
+    return_rate, missing_proof_rate, etc.) -- stored as JSON so agents
+    can access the real evidence later, not just the final score.
+    Returns the new case_id. Also writes the first audit_logs entry.
     """
     conn = get_connection()
     cur = conn.cursor()
     now = _now()
+    evidence_json = json.dumps(evidence or {})
 
     cur.execute("""
         INSERT INTO fraud_cases
             (seller_id, final_risk_score, tier, needs_agent_review,
-             created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (seller_id, final_risk_score, tier, int(needs_agent_review), now, now))
+             evidence_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (seller_id, final_risk_score, tier, int(needs_agent_review), evidence_json, now, now))
 
     case_id = cur.lastrowid
 
@@ -145,12 +150,22 @@ def update_case(case_id: int, explanation: str = None,
 
 
 def get_case(case_id: int) -> dict:
+    """
+    Returns the case as a dict, with the stored evidence_json unpacked
+    and merged in -- so callers can access case['graph_risk_score'],
+    case['return_rate'], etc. directly, not just the final score.
+    """
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM fraud_cases WHERE case_id = ?", (case_id,))
     row = cur.fetchone()
     conn.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    case = dict(row)
+    evidence = json.loads(case.get("evidence_json") or "{}")
+    case.update(evidence)
+    return case
 
 
 def get_audit_trail(case_id: int) -> list:
@@ -267,16 +282,18 @@ def get_pending_appeals() -> list:
     conn.close()
     return [dict(r) for r in rows]
 
+
 def init_all():
     init_db()
     init_appeals_table()
-    
+
+
 if __name__ == "__main__":
     # Quick smoke test: wire risk_scorer.py output into the DB
     import pandas as pd
     from risk_scorer import compute_final_risk
 
-    init_db()
+    init_all()
 
     txns = pd.read_csv("data/transactions.csv")
     dels = pd.read_csv("data/deliveries.csv")
@@ -288,6 +305,7 @@ if __name__ == "__main__":
             final_risk_score=row["final_risk_score"],
             tier=row["tier"],
             needs_agent_review=bool(row["needs_agent_review"]),
+            evidence=row.to_dict(),
         )
 
     print(f"Logged {len(result)} cases into {DB_PATH}")

@@ -12,6 +12,8 @@ audit_logs event.
 
 import sys
 import os
+import time  # add this import at the top of the file
+
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -35,12 +37,18 @@ Do not invent evidence that wasn't given to you."""
 
 
 def build_prompt(case: dict) -> str:
-    return f"""Case evidence:
-- Seller ID: {case['seller_id']}
-- Final risk score: {case['final_risk_score']} (scale 0-1)
+    return f"""Case evidence for Seller {case['seller_id']}:
+
+- Graph collusion signal: {case.get('graph_risk_score', 'N/A')} (0-1 scale)
+  - Customers linked via shared device/IP: {case.get('shared_attr_customers', 'N/A')} out of {case.get('num_customers', 'N/A')} total
+  - Seller sits inside a suspicious tight-knit cluster: {case.get('in_suspicious_community', 'N/A')}
+- Return rate: {case.get('return_rate', 'N/A')} (fraction of orders returned)
+- Missing delivery-proof rate: {case.get('missing_proof_rate', 'N/A')} (deliveries marked complete without proof photo)
+- ML model fraud score: {case.get('ml_fraud_score', 'N/A')} (0-1 scale, from the trained model)
+- Final combined risk score: {case['final_risk_score']} (0-1 scale)
 - Risk tier: {case['tier']}
 
-Write the plain-language explanation now."""
+Write the plain-language explanation now, grounded ONLY in the evidence above."""
 
 
 def explain_case(case_id: int) -> str:
@@ -66,21 +74,18 @@ def explain_case(case_id: int) -> str:
     return explanation
 
 
+
 def run_for_all_pending():
-    """
-    Runs explain_case() for every case that needs agent review and
-    doesn't already have an explanation. This is the batch entry
-    point you'll call from main.py.
-    """
     init_db()
     cases = get_cases_needing_review()
     results = []
 
     for case in cases:
         if case.get("explanation"):
-            continue  # already explained, skip
+            continue
         explanation = explain_case(case["case_id"])
         results.append((case["case_id"], case["seller_id"], explanation))
+        time.sleep(13)  # stay safely under 5 requests/minute
 
     return results
 
