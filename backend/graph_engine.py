@@ -1,169 +1,122 @@
 """
 graph_engine.py
-----------------
-Classical, non-LLM graph anomaly detection.
+-----------------
+CLASSICAL graph-based anomaly detection. No LLM calls here -- this is
+the "cheap and fast" layer the problem statement explicitly asks for.
 
-Why this file has NO LLM calls:
-The problem statement explicitly rewards using cheap/classical solvers for
-routine, high-volume work and saving expensive LLM reasoning for the
-borderline/high-stakes cases. Scoring every transaction is high-volume and
-mechanical -- a graph algorithm does this in milliseconds. Explaining WHY a
-case is suspicious (in plain language) is the part that genuinely needs an
-LLM -- that happens later, in agents/explainer_agent.py, and ONLY for cases
-this engine flags as borderline or high risk.
+WHAT IT DOES:
+1. Builds a graph connecting customers <-> sellers <-> shared devices/IPs
+2. Finds actors that share a device or IP (a strong collusion signal --
+   different "customers" acting from the same device is a classic
+   self-ordering fraud pattern)
+3. Runs community detection to find tightly-connected clusters that
+   look like coordinated rings, not organic shopping behavior
+4. Outputs a per-seller and per-customer graph anomaly score
 
-What "fraud" looks like in graph terms:
-A single dishonest order looks normal. Collusion looks different once you
-zoom out: the SAME seller, customer, and delivery partner keep appearing
-together far more often than random chance would predict, forming a dense
-little triangle (a "ring") inside the wider transaction graph. That
-repeated tight loop -- not any single order -- is the anomaly.
-
-How to read this file if you're explaining it to a judge:
-1. build_graph()      -> turns raw CSV rows into a graph: sellers, customers,
-                          and delivery partners are nodes; each transaction
-                          is an edge connecting them.
-2. find_rings()        -> looks for seller-customer-delivery triples that
-                          repeat suspiciously often (a classical frequency/
-                          density check -- no ML model needed).
-3. compute_risk_signals() -> combines ring membership with hard evidence
-                          (GPS mismatches, missing delivery photos, return
-                          rate) into a per-transaction signal dictionary.
-                          This dictionary -- not a black-box number -- is
-                          what gets handed to the LLM agents later, so every
-                          decision stays traceable to real evidence.
+This score feeds into risk_scorer.py, which combines it with rule-based
+signals before deciding whether a case is worth an expensive LLM call.
 """
 
 import pandas as pd
 import networkx as nx
-from collections import Counter, defaultdict
+from networkx.algorithms.community import greedy_modularity_communities
 
 
-def load_data(data_dir="data"):
-    """Load the three raw CSVs into pandas DataFrames."""
-    transactions = pd.read_csv(f"{data_dir}/transactions.csv")
-    sellers = pd.read_csv(f"{data_dir}/sellers.csv")
-    deliveries = pd.read_csv(f"{data_dir}/deliveries.csv")
-    return transactions, sellers, deliveries
-
-
-def build_graph(transactions: pd.DataFrame) -> nx.MultiGraph:
+def build_actor_graph(transactions: pd.DataFrame) -> nx.Graph:
     """
-    Build a tripartite graph: seller <-> customer <-> delivery_partner.
-
-    Each transaction adds two edges:
-      seller_id  -- customer_id
-      customer_id -- delivery_partner_id
-    Node types are tagged so we can tell sellers, customers, and delivery
-    partners apart later even though they share one graph.
+    Builds an undirected graph where nodes are customers AND sellers,
+    and an edge exists between them if a transaction happened. Also
+    adds edges between customers who share a device_id or ip_address --
+    this is what turns isolated "self-ordering" into a visible cluster.
     """
-    G = nx.MultiGraph()
+    G = nx.Graph()
 
     for _, row in transactions.iterrows():
-        seller = f"S::{row['seller_id']}"
-        customer = f"C::{row['customer_id']}"
-        delivery = f"D::{row['delivery_partner_id']}"
+        cust, seller = row["customer_id"], row["seller_id"]
+        G.add_node(cust, type="customer")
+        G.add_node(seller, type="seller")
+        # weight = number of transactions between this pair (repeat buying is a signal)
+        if G.has_edge(cust, seller):
+            G[cust][seller]["weight"] += 1
+        else:
+            G.add_edge(cust, seller, weight=1, relation="transacted")
 
-        G.add_node(seller, type="seller", id=row["seller_id"])
-        G.add_node(customer, type="customer", id=row["customer_id"])
-        G.add_node(delivery, type="delivery", id=row["delivery_partner_id"])
+    # Link customers who share a device or IP -- the core collusion signal
+    device_groups = transactions.groupby("device_id")["customer_id"].unique()
+    for device, custs in device_groups.items():
+        custs = list(set(custs))
+        if len(custs) > 1:
+            for i in range(len(custs)):
+                for j in range(i + 1, len(custs)):
+                    G.add_edge(custs[i], custs[j], weight=5, relation="shared_device")
 
-        G.add_edge(seller, customer, transaction_id=row["transaction_id"], amount=row["amount"])
-        G.add_edge(customer, delivery, transaction_id=row["transaction_id"], amount=row["amount"])
+    ip_groups = transactions.groupby("ip_address")["customer_id"].unique()
+    for ip, custs in ip_groups.items():
+        custs = list(set(custs))
+        if len(custs) > 1:
+            for i in range(len(custs)):
+                for j in range(i + 1, len(custs)):
+                    G.add_edge(custs[i], custs[j], weight=5, relation="shared_ip")
 
     return G
 
 
-def find_rings(transactions: pd.DataFrame, min_repeats: int = 3):
+def detect_collusion_rings(G: nx.Graph) -> list[set]:
     """
-    Classical frequency check: find (seller, customer, delivery_partner)
-    triples that repeat at least `min_repeats` times.
-
-    This is deliberately simple and explainable -- a judge can verify the
-    logic by eye. No black box. Repeated triads are the strongest, cheapest
-    signal of a closed collusion loop (same three parties transacting with
-    each other over and over, instead of the natural variety you'd expect
-    on a real marketplace).
+    Community detection: finds clusters of nodes that are more densely
+    connected to each other than to the rest of the graph. A tight
+    cluster containing customers linked ONLY by shared device/IP (not
+    organic browsing) is a strong collusion signal.
     """
-    triad_counts = Counter(
-        (row["seller_id"], row["customer_id"], row["delivery_partner_id"])
-        for _, row in transactions.iterrows()
-    )
-
-    rings = {
-        triad: count for triad, count in triad_counts.items()
-        if count >= min_repeats
-    }
-    return rings  # {(seller_id, customer_id, delivery_partner_id): repeat_count}
+    communities = list(greedy_modularity_communities(G, weight="weight"))
+    # Only keep small, dense communities -- large ones are just "popular seller" noise
+    suspicious = [c for c in communities if 3 <= len(c) <= 15]
+    return suspicious
 
 
-def compute_risk_signals(transactions: pd.DataFrame, sellers: pd.DataFrame, deliveries: pd.DataFrame):
+def graph_anomaly_scores(transactions: pd.DataFrame) -> pd.DataFrame:
     """
-    Combine multiple classical (non-LLM) signals per transaction into a
-    single evidence dictionary. Nothing here is a hidden ML score -- every
-    field is directly traceable to a row in the source data, which is what
-    the audit-trail requirement in the problem statement demands.
-
-    Signals used:
-      - ring_membership   : is this transaction part of a repeated triad?
-      - ring_repeat_count : how many times has this exact triad occurred?
-      - gps_mismatch      : delivery partner's GPS didn't match drop-off
-      - no_proof_photo    : no proof-of-delivery photo captured
-      - seller_return_rate: this seller's overall return rate (self-dealing
-                             sellers often show unusually LOW return rates
-                             despite high volume from the same few customers)
+    Main entry point. Returns a DataFrame with one row per seller,
+    including a graph_risk_score (0-1) based on:
+    - how many customers linked to this seller share a device/IP
+    - whether the seller sits inside a detected suspicious community
     """
-    rings = find_rings(transactions)
-    ring_lookup = {}
-    for (seller_id, customer_id, delivery_id), count in rings.items():
-        ring_lookup[(seller_id, customer_id, delivery_id)] = count
+    G = build_actor_graph(transactions)
+    rings = detect_collusion_rings(G)
 
-    # seller-level return rate, needed as context for each transaction
-    return_rates = (
-        transactions.assign(is_returned=lambda d: d["status"] == "returned")
-        .groupby("seller_id")["is_returned"]
-        .mean()
-        .to_dict()
-    )
+    ring_members = set()
+    for ring in rings:
+        ring_members.update(ring)
 
-    delivery_lookup = deliveries.set_index("transaction_id").to_dict(orient="index")
+    results = []
+    for seller_id in transactions["seller_id"].unique():
+        seller_txns = transactions[transactions["seller_id"] == seller_id]
+        customers = set(seller_txns["customer_id"])
 
-    signals = []
-    for _, row in transactions.iterrows():
-        triad = (row["seller_id"], row["customer_id"], row["delivery_partner_id"])
-        delivery_info = delivery_lookup.get(row["transaction_id"], {})
+        # How many of this seller's customers share a device/IP with each other?
+        shared_attr_customers = sum(1 for c in customers if c in ring_members)
+        shared_ratio = shared_attr_customers / max(len(customers), 1)
 
-        signals.append({
-            "transaction_id": row["transaction_id"],
-            "seller_id": row["seller_id"],
-            "customer_id": row["customer_id"],
-            "delivery_partner_id": row["delivery_partner_id"],
-            "amount": row["amount"],
-            "status": row["status"],
-            "ring_membership": triad in ring_lookup,
-            "ring_repeat_count": ring_lookup.get(triad, 1),
-            "gps_mismatch": delivery_info.get("gps_match") == "no",
-            "no_proof_photo": delivery_info.get("proof_photo_captured") == "no",
-            "seller_return_rate": round(return_rates.get(row["seller_id"], 0.0), 2),
+        # Is this seller itself inside a suspicious tight community?
+        in_ring = seller_id in ring_members
+
+        # Simple, explainable scoring formula (not a black box -- important
+        # for the "explain the evidence in plain language" requirement)
+        graph_risk_score = min(1.0, 0.6 * shared_ratio + 0.4 * (1 if in_ring else 0))
+
+        results.append({
+            "seller_id": seller_id,
+            "num_customers": len(customers),
+            "shared_attr_customers": shared_attr_customers,
+            "shared_attr_ratio": round(shared_ratio, 3),
+            "in_suspicious_community": in_ring,
+            "graph_risk_score": round(graph_risk_score, 3),
         })
 
-    return signals
+    return pd.DataFrame(results).sort_values("graph_risk_score", ascending=False)
 
 
 if __name__ == "__main__":
-    # Quick standalone test -- run with: python backend/graph_engine.py
-    # (run from the project root so the data/ path resolves correctly)
-    transactions, sellers, deliveries = load_data()
-    graph = build_graph(transactions)
-
-    print(f"Graph built: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
-
-    rings = find_rings(transactions)
-    print(f"\nSuspicious repeated triads found: {len(rings)}")
-    for (seller, customer, delivery), count in rings.items():
-        print(f"  Seller {seller} + Customer {customer} + Delivery {delivery} -> repeated {count}x")
-
-    print("\nSample risk signals (first 5 transactions):")
-    signals = compute_risk_signals(transactions, sellers, deliveries)
-    for s in signals[:5]:
-        print(f"  {s}")
+    txns = pd.read_csv("data/transactions.csv")
+    scores = graph_anomaly_scores(txns)
+    print(scores.head(10).to_string(index=False))
